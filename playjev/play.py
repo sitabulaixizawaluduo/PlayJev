@@ -265,6 +265,9 @@ async def main(a):
         if hasattr(pol, "reset"):
             for i in range(a.pages): pol.reset(i)
         scores, lengths, confs = [], [], []; steps = [0] * a.pages; seed = a.seed0 + a.pages; t0 = time.time(); total = 0
+        # Evaluation-only outcome tracking; these fields are not added to the visual policy input.
+        start_levels = [o["info"]["level"] for o in obs] if a.game == "pacman" else []
+        max_levels = list(start_levels); cleared = []
         rng = random.Random(0)
         # --delay 1: the action decided from frame k is applied at step k+1 (real-time play, inference overlaps the
         # current step). The first step of an episode applies the current decision. Turn-based games behave the same.
@@ -301,6 +304,7 @@ async def main(a):
             obs = await env.step(acts); total += a.pages
             for i, o in enumerate(obs):
                 steps[i] += 1
+                if a.game == "pacman": max_levels[i] = max(max_levels[i], o["info"]["level"])
                 if hasattr(pol, "executed"): pol.executed(i, acts[i])
                 if a.skip_noop:
                     same = (not o["done"] and o["score"] == prev_obs[i]["score"] and o.get("frame") == prev_obs[i].get("frame"))
@@ -313,19 +317,26 @@ async def main(a):
                 if o["done"] or steps[i] >= a.max_steps:
                     truncated = bool(o.get("truncated")) or steps[i] >= a.max_steps
                     scores.append(o["score"]); lengths.append(steps[i]); steps[i] = 0
+                    if a.game == "pacman": cleared.append(max_levels[i] > start_levels[i])
                     if rec_dir is not None:  # replay file in the docs/DEMO.md format
                         rec = {"game": a.game, "policy": a.policy_name or a.policy, "seed": page_seed[i], "actions": [x["name"] for x in acts_meta],
                                "frames_per_step": env.spec.get("step_frames"), "steps": traces[i], "final_score": o["score"], "truncated": truncated}
+                        if a.game == "pacman":
+                            rec.update(start_level=start_levels[i], max_level=max_levels[i], cleared=cleared[-1])
                         (rec_dir / f"{rec['policy']}_{page_seed[i]}.json").write_text(json.dumps(rec, separators=(",", ":")))
                         traces[i] = []
                     seed += 1; page_seed[i] = seed; pending[i] = None; banned[i].clear()
                     obs[i] = await env.pages[i].reset(seed)
+                    if a.game == "pacman": start_levels[i] = max_levels[i] = obs[i]["info"]["level"]
                     if hasattr(pol, "reset"): pol.reset(i)
         dt = time.time() - t0
         res = {"game": a.game, "policy": a.policy, "delay": a.delay, "skip_noop": bool(a.skip_noop),
                "history": getattr(a, "history", 0), "episodes": len(scores), "score_mean": statistics.mean(scores), "score_median": statistics.median(scores),
                "score_max": max(scores), "len_mean": statistics.mean(lengths), "capped": sum(l >= a.max_steps for l in lengths),
                "conf_mean": statistics.mean(confs), "steps_per_s": total / dt, "steps": total}
+        if a.game == "pacman":
+            res["cleared_episodes"] = sum(cleared)
+            res["clear_rate"] = sum(cleared) / len(scores)
         if a.skip_noop:
             res["noop_steps"] = noop_steps; res["skipped_steps"] = skipped_steps  # unchanged observations seen; executed moves changed by the rule
         if isinstance(pol, HandoverPolicy):
