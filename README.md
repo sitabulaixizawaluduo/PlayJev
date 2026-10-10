@@ -105,6 +105,29 @@ pip install -r requirements.txt && playwright install chromium
 | `bash scripts/reproduce.sh` | the whole model from nothing: the teachers collect, the base model clones them, three DAgger rounds with the replay mix, the closed loop |
 | `python scripts/build_demo.py` | rebuild `demo/` from the games and the recorded runs, then serve it and open `index.html` |
 
+### Pacman level-clear rate
+
+Pacman evaluation also reports `cleared_episodes` and `clear_rate` (a fraction from 0 to 1).
+An episode counts as cleared if its highest observed `info.level` exceeds its reset level;
+clearing several levels still counts once, and a later death does not undo the clear.
+The one-life episode ending and step cap stay unchanged. `capped` measures the step limit,
+not level clears. With `--record`, each Pacman replay stores `start_level`, `max_level`, and
+`cleared`. These are evaluation fields, not additional inputs to the visual model.
+
+Target-environment checks (prepared but not run locally):
+
+```bash
+# Browser/teacher smoke check, then reconcile aggregate metrics with replay files.
+bash scripts/check_pacman_clear_rate.sh
+# Local checkpoint evaluation, same metric reconciliation.
+MODEL_PATH=/path/to/checkpoint bash scripts/eval_pacman_clear_rate.sh
+# Unit coverage without launching a browser or loading a checkpoint.
+python -m unittest discover -s tests -p test_play_clear_rate.py
+```
+
+A zero clear rate can be a valid result. Existing score-only results and old replay files
+cannot establish a clear rate without replaying the actions in the game.
+
 ## 📊 Results
 
 Ten games, one model, 16 held-out episodes per game, argmax move. Random play and the teacher run the same seeds
